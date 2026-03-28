@@ -1,4 +1,4 @@
-"""Async parallel sampling with BatchBackend dispatch."""
+"""Sequential and batch sampling with optional streaming."""
 
 from __future__ import annotations
 
@@ -16,22 +16,21 @@ async def sample(
     **kwargs: Any,
 ) -> list[str]:
     """
-    Sample the backend N times in parallel.
+    Sample the backend N times sequentially, one request at a time.
 
-    If the backend implements BatchBackend, uses batch_complete for efficiency.
-    Otherwise, spawns n concurrent tasks via asyncio.to_thread.
+    If the backend implements BatchBackend, uses batch_complete instead.
     """
     if isinstance(backend, BatchBackend):
         results = await asyncio.to_thread(
             backend.batch_complete, [prompt] * n, **kwargs
         )
         return list(results)
-    else:
-        tasks = [
-            asyncio.create_task(asyncio.to_thread(backend, prompt, **kwargs))
-            for _ in range(n)
-        ]
-        return list(await asyncio.gather(*tasks))
+
+    results = []
+    for _ in range(n):
+        text = await asyncio.to_thread(backend, prompt, **kwargs)
+        results.append(text)
+    return results
 
 
 async def sample_stream(
@@ -41,13 +40,12 @@ async def sample_stream(
     **kwargs: Any,
 ) -> AsyncIterator[tuple[int, str]]:
     """
-    Stream samples as they complete.
+    Yield (index, text) one at a time as each sample completes.
 
-    Yields (index, text) tuples as each sample finishes.
-    Useful for TUI live updates.
+    Requests are made sequentially so each result is yielded immediately,
+    allowing the TUI to update after every sample.
     """
     if isinstance(backend, BatchBackend):
-        # Batch backends don't stream; yield all at once
         results = await asyncio.to_thread(
             backend.batch_complete, [prompt] * n, **kwargs
         )
@@ -55,17 +53,6 @@ async def sample_stream(
             yield i, text
         return
 
-    queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
-
-    async def _run_one(index: int) -> None:
+    for i in range(n):
         text = await asyncio.to_thread(backend, prompt, **kwargs)
-        await queue.put((index, text))
-
-    tasks = [asyncio.create_task(_run_one(i)) for i in range(n)]
-
-    for _ in range(n):
-        idx, text = await queue.get()
-        yield idx, text
-
-    # Ensure all tasks are cleaned up
-    await asyncio.gather(*tasks, return_exceptions=True)
+        yield i, text
