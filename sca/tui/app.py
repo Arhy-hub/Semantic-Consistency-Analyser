@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import numpy as np
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Footer, Header
 from textual import work
@@ -29,9 +28,9 @@ from sca.tui.widgets.sample_feed import SampleFeed
 from sca.tui.widgets.similarity_heatmap import SimilarityHeatmap
 
 
-class SampleReceived(Message):
-    """Posted when a new sample arrives from the backend."""
+# ── Messages ──────────────────────────────────────────────────────────────
 
+class SampleReceived(Message):
     def __init__(self, index: int, text: str) -> None:
         super().__init__()
         self.index = index
@@ -39,8 +38,6 @@ class SampleReceived(Message):
 
 
 class MetricsUpdated(Message):
-    """Posted when metrics have been recomputed."""
-
     def __init__(self, metrics: Metrics, sample_count: int) -> None:
         super().__init__()
         self.metrics = metrics
@@ -48,41 +45,45 @@ class MetricsUpdated(Message):
 
 
 class ClustersUpdated(Message):
-    """Posted when clusters have been recomputed."""
-
     def __init__(self, clusters: list[Cluster]) -> None:
         super().__init__()
         self.clusters = clusters
 
 
 class HeatmapUpdated(Message):
-    """Posted when the similarity matrix has been updated."""
-
-    def __init__(self, matrix: np.ndarray) -> None:
+    def __init__(self, matrix: np.ndarray, title: str = "cosine sim") -> None:
         super().__init__()
         self.matrix = matrix
+        self.title = title
 
 
 class AnalysisComplete(Message):
-    """Posted when the full analysis is done."""
-
     def __init__(self, results: Results) -> None:
         super().__init__()
         self.results = results
 
 
+# ── Available heatmap measures ─────────────────────────────────────────────
+
+_HEATMAP_MODES = ["cosine sim", "cluster agreement"]
+
+
+def _agreement_matrix(labels: np.ndarray) -> np.ndarray:
+    """Binary matrix: +1 if same cluster, -1 if different."""
+    same = (labels[:, None] == labels[None, :]).astype(float)
+    return same * 2.0 - 1.0  # maps {0,1} → {-1,+1} so colour ramp still applies
+
+
+# ── App ────────────────────────────────────────────────────────────────────
+
 class SCAApp(App):
     """
     Semantic Consistency Analyzer TUI.
 
-    4-panel layout:
     ┌─────────────────────┬──────────────────────────────┐
-    │  Sample Feed        │  Similarity Heatmap           │
-    │  (live streaming)   │  (updates per sample)         │
+    │  Sample Feed        │  Heatmap (m to cycle mode)    │
     ├─────────────────────┼──────────────────────────────┤
     │  Metrics Panel      │  Cluster Panel                │
-    │  entropy / sim /    │  N clusters, auto-summaries,  │
-    │  silhouette         │  member count per cluster     │
     └─────────────────────┴──────────────────────────────┘
     """
 
@@ -117,18 +118,21 @@ class SCAApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
+        ("m", "cycle_heatmap_mode", "Heatmap mode"),
     ]
 
     def __init__(self, analyzer: SemanticConsistencyAnalyzer, **kwargs) -> None:
         super().__init__(**kwargs)
         self.analyzer = analyzer
         self._results: Results | None = None
-        # Internal state for incremental updates
         self._samples: list[str] = []
         self._embeddings: list[np.ndarray] = []
         self._embedder = Embedder(analyzer.embedding_model)
         self._min_cluster_size = analyzer.min_cluster_size
+        # Heatmap state
+        self._sim_matrix: np.ndarray | None = None
+        self._labels: np.ndarray | None = None
+        self._heatmap_mode_idx: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -141,19 +145,36 @@ class SCAApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Start the sampling worker when the app mounts."""
         self._run_analysis()
+
+    # ── Heatmap mode cycling ───────────────────────────────────────────────
+
+    def action_cycle_heatmap_mode(self) -> None:
+        if self._labels is None:
+            return  # cluster agreement not available yet
+        self._heatmap_mode_idx = (self._heatmap_mode_idx + 1) % len(_HEATMAP_MODES)
+        self._post_heatmap()
+
+    def _post_heatmap(self) -> None:
+        """Post the current heatmap matrix for whichever mode is active."""
+        if self._sim_matrix is None:
+            return
+        mode = _HEATMAP_MODES[self._heatmap_mode_idx]
+        if mode == "cluster agreement" and self._labels is not None:
+            self.post_message(HeatmapUpdated(_agreement_matrix(self._labels), mode))
+        else:
+            self.post_message(HeatmapUpdated(self._sim_matrix, "cosine sim"))
+
+    # ── Background analysis worker ─────────────────────────────────────────
 
     @work(exclusive=True)
     async def _run_analysis(self) -> None:
-        """Background worker that runs the analyzer and posts UI messages."""
         backend = self.analyzer._get_backend()
 
-        from sca.core.sampler import sample_stream  # noqa: PLC0415
+        from sca.core.sampler import sample_stream          # noqa: PLC0415
         from sca.core.backends.protocol import BatchBackend  # noqa: PLC0415
 
         if isinstance(backend, BatchBackend):
-            # For batch backends, get all samples then stream display
             raw = await asyncio.to_thread(
                 backend.batch_complete,
                 [self.analyzer.prompt] * self.analyzer.n,
@@ -170,23 +191,23 @@ class SCAApp(App):
             ):
                 await self._process_new_sample(idx, text)
 
-        # Final full analysis
+        # Final pass with cluster summaries
         if self._samples and self._embeddings:
             embeddings = np.stack(self._embeddings)
             sim_matrix = compute_similarity_matrix(embeddings)
             clusters = await asyncio.to_thread(
                 cluster_embeddings, embeddings, self._samples, self._min_cluster_size
             )
-            # Generate summaries
             await self.analyzer._summarize_clusters(clusters, backend)
             self.post_message(ClustersUpdated(clusters))
-
             labels = self._build_labels(self._samples, clusters)
+            self._labels = labels
+            self._sim_matrix = sim_matrix
+            self._post_heatmap()
             metrics = self._compute_metrics(embeddings, sim_matrix, clusters, labels)
             self.post_message(MetricsUpdated(metrics, len(self._samples)))
 
     async def _process_new_sample(self, index: int, text: str) -> None:
-        """Process a single new sample: embed, update matrix, recompute metrics."""
         self._samples.append(text)
         emb = await asyncio.to_thread(self._embedder.embed_one, text)
         self._embeddings.append(emb)
@@ -195,17 +216,23 @@ class SCAApp(App):
 
         embeddings = np.stack(self._embeddings)
         sim_matrix = compute_similarity_matrix(embeddings)
-        self.post_message(HeatmapUpdated(sim_matrix))
+        self._sim_matrix = sim_matrix
 
-        # Recompute clusters and metrics once we have enough samples
         if len(self._samples) >= self._min_cluster_size:
             clusters = await asyncio.to_thread(
                 cluster_embeddings, embeddings, self._samples, self._min_cluster_size
             )
             labels = self._build_labels(self._samples, clusters)
+            self._labels = labels
+            self._post_heatmap()
             metrics = self._compute_metrics(embeddings, sim_matrix, clusters, labels)
             self.post_message(MetricsUpdated(metrics, len(self._samples)))
             self.post_message(ClustersUpdated(clusters))
+        else:
+            # No clusters yet — always show cosine sim
+            self.post_message(HeatmapUpdated(sim_matrix, "cosine sim"))
+
+    # ── Helpers ────────────────────────────────────────────────────────────
 
     def _build_labels(self, samples: list[str], clusters: list[Cluster]) -> np.ndarray:
         labels = np.zeros(len(samples), dtype=int)
@@ -224,40 +251,31 @@ class SCAApp(App):
         clusters: list[Cluster],
         labels: np.ndarray,
     ) -> Metrics:
-        mps = mean_pairwise_similarity(sim_matrix)
-        s_entropy = semantic_entropy(clusters)
-        cdv = centroid_distance_variance(embeddings)
-        sil = silhouette(embeddings, labels)
         return Metrics(
-            mean_pairwise_similarity=mps,
-            semantic_entropy=s_entropy,
+            mean_pairwise_similarity=mean_pairwise_similarity(sim_matrix),
+            semantic_entropy=semantic_entropy(clusters),
             cluster_count=len(clusters),
-            silhouette_score=sil,
-            centroid_distance_variance=cdv,
+            silhouette_score=silhouette(embeddings, labels),
+            centroid_distance_variance=centroid_distance_variance(embeddings),
             entailment_rate=None,
         )
 
-    # ── Message handlers ─────────────────────────────────────────────────
+    # ── Message handlers ───────────────────────────────────────────────────
 
     def on_sample_received(self, message: SampleReceived) -> None:
-        feed = self.query_one("#sample-feed", SampleFeed)
-        feed.add_sample(message.index, message.text)
+        self.query_one("#sample-feed", SampleFeed).add_sample(message.index, message.text)
 
     def on_metrics_updated(self, message: MetricsUpdated) -> None:
-        panel = self.query_one("#metrics", MetricsPanel)
-        panel.update_metrics(message.metrics, message.sample_count)
+        self.query_one("#metrics", MetricsPanel).update_metrics(message.metrics, message.sample_count)
 
     def on_clusters_updated(self, message: ClustersUpdated) -> None:
-        panel = self.query_one("#clusters", ClusterPanel)
-        panel.update_clusters(message.clusters)
+        self.query_one("#clusters", ClusterPanel).update_clusters(message.clusters)
 
     def on_heatmap_updated(self, message: HeatmapUpdated) -> None:
-        heatmap = self.query_one("#heatmap", SimilarityHeatmap)
-        heatmap.update_matrix(message.matrix)
+        self.query_one("#heatmap", SimilarityHeatmap).update_matrix(message.matrix, message.title)
 
     def on_analysis_complete(self, message: AnalysisComplete) -> None:
         self._results = message.results
 
     def get_results(self) -> Results | None:
-        """Return results after analysis is complete."""
         return self._results

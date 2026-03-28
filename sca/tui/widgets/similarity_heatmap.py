@@ -1,4 +1,4 @@
-"""Similarity heatmap widget — fills the tile with axes and legend."""
+"""Similarity heatmap — display-agnostic matrix with centred axes and entropy sidebar."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from textual.widget import Widget
 from textual.app import RenderResult
 from rich.text import Text
 
-# Left margin width (chars) reserved for row-axis labels
-_LEFT = 4
-# Rows reserved at the bottom: 1 col-axis + 1 legend bar + 1 legend labels
-_BOTTOM = 3
+# ── Layout constants ──────────────────────────────────────────────────────
+_LEFT   = 5   # row axis:      "  1 │"
+_RIGHT  = 4   # entropy col:   "│███"
+_BOTTOM = 3   # col axis, legend bar, legend values
 
-# Continuous colour ramp: similarity 0 → 1 maps to dark → cyan
+# ── Colour ramp: value [-1, 1] → dark … cyan ─────────────────────────────
 _RAMP = [
     (0.00, "#1a1a1a"),
     (0.35, "#2e2e2e"),
@@ -23,64 +23,98 @@ _RAMP = [
 
 
 def _cell_style(value: float) -> str:
-    """Interpolate through the ramp for a similarity value in [-1, 1]."""
     v = max(0.0, min(1.0, (value + 1.0) / 2.0))
     for i in range(len(_RAMP) - 1):
         lo_v, lo_c = _RAMP[i]
         hi_v, hi_c = _RAMP[i + 1]
         if v <= hi_v:
-            # Return the closer bucket colour (no true colour blending needed)
             return hi_c if (v - lo_v) >= (hi_v - v) else lo_c
     return _RAMP[-1][1]
 
 
-def _label_row(n: int, width: int) -> Text:
-    """Build a column-axis label row of exactly `width` chars."""
-    buf = [" "] * width
-    # Place labels at a handful of evenly-spaced positions
-    ticks = _tick_positions(n, width)
-    for col, sample_idx in ticks:
-        lbl = str(sample_idx + 1)
+def _row_entropy(row: np.ndarray) -> float:
+    """Normalised Shannon entropy of one matrix row treated as weights."""
+    p = row + 1.0
+    total = p.sum()
+    if total == 0:
+        return 0.0
+    p = p / total
+    h = float(-np.sum(p * np.log2(p + 1e-10)))
+    return min(1.0, h / np.log2(max(len(p), 2)))
+
+
+def _row_label_map(n: int, plot_h: int) -> dict[int, str]:
+    """
+    Map display-row indices to sample-number labels.
+
+    Each label is placed at the midpoint row of its sample's pixel block,
+    so it sits visually centred in the block regardless of up/down scaling.
+    """
+    result: dict[int, str] = {}
+    # Aim for ~plot_h/3 labels; never more than n
+    step = max(1, n // max(plot_h // 3, 1))
+    last_row = -999
+    for i in range(0, n, step):
+        mid = int((i + 0.5) * plot_h / n)
+        if mid - last_row >= 2:
+            result[mid] = str(i + 1)
+            last_row = mid
+    # Always include n (last sample) if there's room
+    last_mid = int((n - 0.5) * plot_h / n)
+    if last_mid - last_row >= 2 and (n - 1) % step != 0:
+        result[last_mid] = str(n)
+    return result
+
+
+def _col_axis(n: int, plot_w: int) -> Text:
+    """
+    Build the column-axis label row.
+
+    Each label is centred at the midpoint column of its sample's pixel block.
+    """
+    buf = [" "] * plot_w
+    step = max(1, n // max(plot_w // 4, 1))
+    last_end = -999
+    for i in range(0, n, step):
+        mid = int((i + 0.5) * plot_w / n)
+        lbl = str(i + 1)
+        start = mid - len(lbl) // 2
+        end = start + len(lbl)
+        if start >= 0 and end <= plot_w and start > last_end:
+            for k, ch in enumerate(lbl):
+                buf[start + k] = ch
+            last_end = end
+    # Always include n
+    last_mid = int((n - 0.5) * plot_w / n)
+    lbl = str(n)
+    start = last_mid - len(lbl) // 2
+    end = start + len(lbl)
+    if start >= 0 and end <= plot_w and start > last_end:
         for k, ch in enumerate(lbl):
-            if col + k < width:
-                buf[col + k] = ch
+            buf[start + k] = ch
+
     t = Text(no_wrap=True, overflow="fold")
     t.append("".join(buf), style="#555555")
     return t
 
 
-def _tick_positions(n: int, width: int, max_ticks: int = 8) -> list[tuple[int, int]]:
-    """Return (col_pixel, sample_index) pairs for axis tick labels."""
-    if n <= 1:
-        return [(0, 0)]
-    step = max(1, n // min(max_ticks, width // 4))
-    positions = []
-    for idx in range(0, n, step):
-        col = int(idx * width / n)
-        positions.append((col, idx))
-    # Always include last sample
-    last_col = width - len(str(n))
-    if positions[-1][1] != n - 1 and last_col >= 0:
-        positions.append((last_col, n - 1))
-    return positions
-
-
 class SimilarityHeatmap(Widget):
     """
-    Pairwise cosine similarity matrix, scaled to fill the widget tile.
+    Display-agnostic n×n matrix heatmap.
 
-    Layout (inside border):
-        ┌──────────────────────────────┐
-        │ row │  matrix cells          │  ← plot_h rows
-        │  #  │                        │
-        ├─────┴────────────────────────┤
-        │     col-axis labels          │  ← 1 row
-        │     legend gradient bar      │  ← 1 row
-        │     0.0      0.5      1.0    │  ← 1 row
-        └──────────────────────────────┘
+    The app decides what measure to pass (cosine sim, cluster agreement, …).
+    Press `m` to cycle through available measures.
+
+    Layout inside border:
+        row │  matrix cells          │ H
+        axis│                        │ ←per-row entropy
+        ────┴────────────────────────┴──
+             sample axis labels        H
+             legend gradient
+             0.0      0.5      1.0
     """
 
-    BORDER_TITLE = "similarity"
+    BORDER_TITLE = "cosine sim"
 
     DEFAULT_CSS = """
     SimilarityHeatmap {
@@ -97,11 +131,14 @@ class SimilarityHeatmap(Widget):
         self._matrix: np.ndarray | None = None
         self._n = 0
 
-    def update_matrix(self, matrix: np.ndarray) -> None:
+    def update_matrix(self, matrix: np.ndarray, title: str = "cosine sim") -> None:
         self._matrix = matrix
         self._n = matrix.shape[0]
+        self.border_title = title
         self.border_subtitle = f"n={self._n}"
         self.refresh()
+
+    # ── render ─────────────────────────────────────────────────────────────
 
     def render(self) -> RenderResult:
         if self._matrix is None or self._n == 0:
@@ -112,59 +149,63 @@ class SimilarityHeatmap(Widget):
         n = self._n
 
         plot_h = max(1, h - _BOTTOM)
-        plot_w = max(1, w - _LEFT)
+        plot_w = max(1, w - _LEFT - _RIGHT)
+
+        row_labels = _row_label_map(n, plot_h)
 
         out = Text(no_wrap=True, overflow="fold")
 
-        # ── row-axis tick interval ────────────────────────────────────────
-        row_tick_step = max(1, plot_h // 6)
-
-        # ── matrix rows ──────────────────────────────────────────────────
+        # ── matrix rows ───────────────────────────────────────────────────
         for row in range(plot_h):
             i = min(int(row * n / plot_h), n - 1)
 
-            # Left axis label
-            if row % row_tick_step == 0:
-                out.append(f"{i + 1:>3} ", style="#555555")
-            else:
-                out.append("    ")
+            # Left axis (3-char label, right-justified, then space + "│")
+            lbl = row_labels.get(row, "")
+            out.append(f"{lbl:>3} ", style="#555555")
+            out.append("│", style="#333333")
 
             # Matrix cells
             for col in range(plot_w):
                 j = min(int(col * n / plot_w), n - 1)
-                val = float(self._matrix[i, j])
-                out.append("█", style=_cell_style(val))
+                out.append("█", style=_cell_style(float(self._matrix[i, j])))
+
+            # Entropy sidebar: "│" + 3-char bar
+            out.append("│", style="#333333")
+            H = _row_entropy(self._matrix[i, :])
+            bar = int(round(H * 3))
+            style = "#00d7d7" if H > 0.5 else "#555555"
+            out.append("█" * bar + " " * (3 - bar), style=style)
 
             out.append("\n")
 
-        # ── column-axis labels ────────────────────────────────────────────
+        # ── column axis ───────────────────────────────────────────────────
         out.append(" " * _LEFT)
-        out.append_text(_label_row(n, plot_w))
+        out.append_text(_col_axis(n, plot_w))
+        out.append(" " * (_RIGHT - 1))
+        out.append("H", style="#00d7d7")
         out.append("\n")
 
-        # ── legend gradient bar ───────────────────────────────────────────
+        # ── legend gradient ───────────────────────────────────────────────
         out.append(" " * _LEFT)
         for col in range(plot_w):
             v = col / max(plot_w - 1, 1)
-            out.append("█", style=_cell_style(2 * v - 1))  # [-1,1] → ramp
+            out.append("█", style=_cell_style(2 * v - 1))
         out.append("\n")
 
         # ── legend value labels ───────────────────────────────────────────
         out.append(" " * _LEFT)
-        lo_lbl = "0.0"
-        mid_lbl = "0.5"
-        hi_lbl = "1.0"
-        mid_pos = (plot_w - len(mid_lbl)) // 2
-        hi_pos = plot_w - len(hi_lbl)
-        legend_line = [" "] * plot_w
-        for k, ch in enumerate(lo_lbl):
-            legend_line[k] = ch
-        for k, ch in enumerate(mid_lbl):
+        lo, mid, hi = "0.0", "0.5", "1.0"
+        mid_pos = (plot_w - len(mid)) // 2
+        hi_pos  = plot_w - len(hi)
+        legend  = [" "] * plot_w
+        for k, ch in enumerate(lo):
+            legend[k] = ch
+        for k, ch in enumerate(mid):
             if mid_pos + k < plot_w:
-                legend_line[mid_pos + k] = ch
-        for k, ch in enumerate(hi_lbl):
+                legend[mid_pos + k] = ch
+        for k, ch in enumerate(hi):
             if hi_pos + k < plot_w:
-                legend_line[hi_pos + k] = ch
-        out.append("".join(legend_line), style="#555555")
+                legend[hi_pos + k] = ch
+        out.append("".join(legend), style="#555555")
 
         return out
