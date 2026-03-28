@@ -75,7 +75,13 @@ class MetricsPanel(Widget):
             _bar(norm_entropy),
         )
 
-        table.add_row("cluster count", str(m.cluster_count), Text(""))
+        # cluster count: bar fills relative to sample count (1 cluster → empty, n clusters → full)
+        max_clusters = max(self._sample_count, 1)
+        table.add_row(
+            "cluster count",
+            str(m.cluster_count),
+            _bar(m.cluster_count / max_clusters),
+        )
 
         table.add_row(
             "silhouette score",
@@ -83,10 +89,11 @@ class MetricsPanel(Widget):
             _bar((m.silhouette_score + 1) / 2),
         )
 
+        # centroid dist. variance: unbounded — squash with tanh
         table.add_row(
             "centroid dist. variance",
             f"{m.centroid_distance_variance:.6f}",
-            Text(""),
+            _bar(math.tanh(m.centroid_distance_variance * 10)),
         )
 
         if m.entailment_rate is not None:

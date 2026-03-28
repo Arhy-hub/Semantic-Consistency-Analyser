@@ -48,6 +48,7 @@ def cluster_embeddings(
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=effective_min,
+        min_samples=1,          # every point belongs to a cluster; no noise
         metric="euclidean",
         prediction_data=True,
     )

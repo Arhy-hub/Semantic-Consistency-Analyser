@@ -167,7 +167,7 @@ def run(
 def sweep(
     prompt: str = typer.Argument(..., help="The prompt to analyze."),
     model: Optional[str] = typer.Option(None, help="Model name (via LiteLLM)."),
-    temps: str = typer.Option("0.0,0.3,0.7,1.0,1.5", help="Comma-separated temperatures."),
+    temps: str = typer.Option("0.0,0.3,0.5,0.7,1.0", help="Comma-separated temperatures (stay ≤1.0 for most APIs)."),
     n: int = typer.Option(20, help="Number of samples per temperature."),
     export: Optional[str] = typer.Option(None, help="Export format: json, png, html."),
     out: Optional[str] = typer.Option(None, help="Output file path for export."),

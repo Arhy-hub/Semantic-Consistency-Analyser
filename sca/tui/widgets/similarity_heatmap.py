@@ -11,24 +11,31 @@ from rich.text import Text
 _LEFT   = 5   # row axis:  "  1 │"
 _BOTTOM = 3   # col axis, legend bar, legend values
 
-# ── Colour ramp: value [-1, 1] → dark … cyan ─────────────────────────────
-_RAMP = [
-    (0.00, "#1a1a1a"),
-    (0.35, "#2e2e2e"),
-    (0.55, "#555555"),
-    (0.75, "#999999"),
-    (0.92, "#00d7d7"),
+# ── Gradient: value [-1, 1] → smooth dark … cyan ─────────────────────────
+# Anchor points as (stop, (R, G, B))
+_GRADIENT: list[tuple[float, tuple[int, int, int]]] = [
+    (0.00, (10,  10,  10)),
+    (0.25, (40,  40,  40)),
+    (0.50, (85,  85,  85)),
+    (0.75, (0,  140, 140)),
+    (1.00, (0,  215, 215)),
 ]
 
 
 def _cell_style(value: float) -> str:
+    """Smooth RGB-interpolated colour for a similarity value in [-1, 1]."""
     v = max(0.0, min(1.0, (value + 1.0) / 2.0))
-    for i in range(len(_RAMP) - 1):
-        lo_v, lo_c = _RAMP[i]
-        hi_v, hi_c = _RAMP[i + 1]
+    for i in range(len(_GRADIENT) - 1):
+        lo_v, (r1, g1, b1) = _GRADIENT[i]
+        hi_v, (r2, g2, b2) = _GRADIENT[i + 1]
         if v <= hi_v:
-            return hi_c if (v - lo_v) >= (hi_v - v) else lo_c
-    return _RAMP[-1][1]
+            t = (v - lo_v) / (hi_v - lo_v) if hi_v > lo_v else 1.0
+            r = int(r1 + (r2 - r1) * t)
+            g = int(g1 + (g2 - g1) * t)
+            b = int(b1 + (b2 - b1) * t)
+            return f"#{r:02x}{g:02x}{b:02x}"
+    r, g, b = _GRADIENT[-1][1]
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 
