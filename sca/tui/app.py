@@ -89,6 +89,17 @@ class SCAApp(App):
     CSS = """
     Screen {
         layout: vertical;
+        background: #0a0a0a;
+        color: white;
+    }
+    Header {
+        background: #0a0a0a;
+        color: #00d7d7;
+        text-style: bold;
+    }
+    Footer {
+        background: #111111;
+        color: #555555;
     }
     #top-row {
         height: 60%;
@@ -100,6 +111,7 @@ class SCAApp(App):
     }
     SampleFeed, SimilarityHeatmap, MetricsPanel, ClusterPanel {
         width: 50%;
+        background: #0a0a0a;
     }
     """
 

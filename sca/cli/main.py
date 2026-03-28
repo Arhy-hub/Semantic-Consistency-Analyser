@@ -44,16 +44,16 @@ def _print_results(results) -> None:
     m = results.metrics
 
     console.print(Panel(
-        f"[bold cyan]Model:[/bold cyan] {results.config.get('model', 'custom backend')}\n"
-        f"[bold cyan]Prompt:[/bold cyan] {results.config.get('prompt', '')[:100]}\n"
-        f"[bold cyan]Samples:[/bold cyan] {len(results.samples)}\n"
-        f"[bold cyan]Timestamp:[/bold cyan] {results.timestamp}",
+        f"[bold white]Model:[/bold white] {results.config.get('model', 'custom backend')}\n"
+        f"[bold white]Prompt:[/bold white] {results.config.get('prompt', '')[:100]}\n"
+        f"[bold white]Samples:[/bold white] {len(results.samples)}\n"
+        f"[bold white]Timestamp:[/bold white] {results.timestamp}",
         title="[bold]Semantic Consistency Analysis[/bold]",
-        border_style="blue",
+        border_style="white",
     ))
 
     table = Table(title="Metrics", show_header=True)
-    table.add_column("Metric", style="cyan")
+    table.add_column("Metric", style="white")
     table.add_column("Value", style="white")
 
     table.add_row("Mean Pairwise Similarity", f"{m.mean_pairwise_similarity:.4f}")
@@ -70,7 +70,7 @@ def _print_results(results) -> None:
         console.print("\n[bold]Clusters:[/bold]")
         for cluster in results.clusters:
             summary = cluster.summary or f"Cluster {cluster.id}"
-            console.print(f"  [cyan]#{cluster.id}[/cyan] ({len(cluster.members)} samples): {summary}")
+            console.print(f"  [white]#{cluster.id}[/white] ({len(cluster.members)} samples): {summary}")
 
     console.print(f"\n[dim]Samples:[/dim]")
     for i, sample in enumerate(results.samples):

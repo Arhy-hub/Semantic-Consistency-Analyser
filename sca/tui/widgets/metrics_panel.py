@@ -1,34 +1,40 @@
-"""Metrics panel widget — displays current consistency metrics."""
+"""Metrics panel widget."""
 
 from __future__ import annotations
+
+import math
 
 from textual.widget import Widget
 from textual.app import RenderResult
 from rich.table import Table
-from rich.panel import Panel
 from rich.text import Text
 
 from sca.core.metrics import Metrics
 
+BAR_WIDTH = 16
 
-def _bar(value: float, width: int = 20) -> str:
-    """Render a simple ASCII progress bar for a [0, 1] value."""
-    filled = int(max(0.0, min(1.0, value)) * width)
-    return "█" * filled + "░" * (width - filled)
+
+def _bar(value: float) -> Text:
+    """Greyscale progress bar: filled portion in white, empty in dark."""
+    filled = int(max(0.0, min(1.0, value)) * BAR_WIDTH)
+    t = Text(no_wrap=True)
+    t.append("█" * filled, style="white")
+    t.append("░" * (BAR_WIDTH - filled), style="#333333")
+    return t
 
 
 class MetricsPanel(Widget):
-    """
-    Displays computed semantic consistency metrics.
 
-    Updates as metrics are recomputed after each new sample.
-    """
+    BORDER_TITLE = "metrics"
 
     DEFAULT_CSS = """
     MetricsPanel {
-        border: solid $primary;
+        border: solid #333333;
+        border-title-color: #00d7d7;
+        border-title-style: bold;
         height: 100%;
         overflow: hidden;
+        padding: 0 1;
     }
     """
 
@@ -38,65 +44,56 @@ class MetricsPanel(Widget):
         self._sample_count: int = 0
 
     def update_metrics(self, metrics: Metrics, sample_count: int = 0) -> None:
-        """Update displayed metrics."""
         self._metrics = metrics
         self._sample_count = sample_count
         self.refresh()
 
     def render(self) -> RenderResult:
         if self._metrics is None:
-            return Panel(
-                "[dim]Waiting for samples...[/dim]",
-                title="Metrics",
-                border_style="blue",
-            )
+            return Text("waiting for samples…", style="dim #555555")
 
         m = self._metrics
-        table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column("Metric", style="bold cyan", min_width=28)
-        table.add_column("Value", style="white")
-        table.add_column("Bar", style="green")
+
+        table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+        table.add_column("label", style="#888888", min_width=26)
+        table.add_column("value", style="white", min_width=8)
+        table.add_column("bar")
+
+        table.add_row("samples collected", str(self._sample_count), Text(""))
 
         table.add_row(
-            "Samples",
-            str(self._sample_count),
-            "",
-        )
-        table.add_row(
-            "Mean Pairwise Similarity",
+            "mean pairwise similarity",
             f"{m.mean_pairwise_similarity:.4f}",
             _bar(m.mean_pairwise_similarity),
         )
 
-        # Entropy: normalize by log(cluster_count) for display
-        import math
         max_entropy = math.log(max(m.cluster_count, 2))
         norm_entropy = m.semantic_entropy / max_entropy if max_entropy > 0 else 0.0
         table.add_row(
-            "Semantic Entropy",
+            "semantic entropy",
             f"{m.semantic_entropy:.4f}",
             _bar(norm_entropy),
         )
+
+        table.add_row("cluster count", str(m.cluster_count), Text(""))
+
         table.add_row(
-            "Cluster Count",
-            str(m.cluster_count),
-            "",
-        )
-        table.add_row(
-            "Silhouette Score",
+            "silhouette score",
             f"{m.silhouette_score:.4f}",
-            _bar((m.silhouette_score + 1) / 2),  # [-1,1] → [0,1]
+            _bar((m.silhouette_score + 1) / 2),
         )
+
         table.add_row(
-            "Centroid Dist. Variance",
+            "centroid dist. variance",
             f"{m.centroid_distance_variance:.6f}",
-            "",
+            Text(""),
         )
+
         if m.entailment_rate is not None:
             table.add_row(
-                "Entailment Rate",
+                "entailment rate",
                 f"{m.entailment_rate:.4f}",
                 _bar(m.entailment_rate),
             )
 
-        return Panel(table, title="Metrics", border_style="blue")
+        return table
