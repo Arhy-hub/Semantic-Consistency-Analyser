@@ -145,3 +145,7 @@ export GEMINI_API_KEY=...
 ```
 
 Ollama and other local models need no API key — just set `--model ollama/<model-name>`.
+
+
+
+[Paper for Semantic Entropy](https://arxiv.org/pdf/2302.09664)
