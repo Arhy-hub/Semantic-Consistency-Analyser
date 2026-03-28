@@ -1,5 +1,6 @@
 # sca — Semantic Consistency Analyzer
 (main is the most up to date version)
+
 A terminal tool that samples an LLM N times on the same prompt and measures how semantically consistent the outputs are. Results stream into a live TUI as samples arrive.
 
 **Core idea:** if you ask a model the same question 20 times at temperature 0.9, do you get 20 versions of the same answer, or 20 different ones? High consistency → the model has a confident, stable response. High entropy → the model is uncertain or the question is genuinely ambiguous.
