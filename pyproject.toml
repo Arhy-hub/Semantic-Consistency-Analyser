@@ -23,11 +23,10 @@ dependencies = [
 
 [project.optional-dependencies]
 hf = ["transformers>=4.40", "torch>=2.0"]
-gguf = ["llama-cpp-python>=0.2"]
 nli = []  # already in core via sentence-transformers cross-encoder
 umap = ["umap-learn>=0.5"]
 export = ["matplotlib>=3.8"]
-all = ["sca[hf,gguf,umap,export]"]
+all = ["sca[hf,umap,export]"]
 
 [project.scripts]
 sca = "sca.cli.main:app"

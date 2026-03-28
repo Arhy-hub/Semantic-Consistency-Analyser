@@ -145,28 +145,3 @@ export GEMINI_API_KEY=...
 ```
 
 Ollama and other local models need no API key — just set `--model ollama/<model-name>`.
-
----
-
-## Files to share
-
-To share this project, send:
-
-```
-ai-safety-hack/
-├── sca/                  # all source code
-├── tests/                # test suite
-├── pyproject.toml        # package definition + dependencies
-├── uv.lock               # locked dependency versions (optional but recommended)
-└── README.md
-```
-
-The recipient installs with:
-
-```bash
-pip install -e .
-# or
-uv sync
-```
-
-Do **not** share `.venv/` (large, platform-specific) or `__pycache__/` directories.
