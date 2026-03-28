@@ -1,0 +1,33 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment / secrets
+.env
+.env.*
+
+# sca export outputs
+results.json
+scatter.png
+report.html
+*.sca.json
+
+# OS
+.DS_Store
+Thumbs.db
