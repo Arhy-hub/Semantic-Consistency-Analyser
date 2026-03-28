@@ -1,4 +1,4 @@
-"""Sequential and batch sampling with optional streaming."""
+"""Concurrent and batch sampling with optional streaming."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ async def sample(
     **kwargs: Any,
 ) -> list[str]:
     """
-    Sample the backend N times sequentially, one request at a time.
+    Sample the backend N times concurrently.
 
     If the backend implements BatchBackend, uses batch_complete instead.
     """
@@ -26,11 +26,11 @@ async def sample(
         )
         return list(results)
 
-    results = []
-    for _ in range(n):
-        text = await asyncio.to_thread(backend, prompt, **kwargs)
-        results.append(text)
-    return results
+    tasks = [
+        asyncio.create_task(asyncio.to_thread(backend, prompt, **kwargs))
+        for _ in range(n)
+    ]
+    return list(await asyncio.gather(*tasks))
 
 
 async def sample_stream(
@@ -40,10 +40,10 @@ async def sample_stream(
     **kwargs: Any,
 ) -> AsyncIterator[tuple[int, str]]:
     """
-    Yield (index, text) one at a time as each sample completes.
+    Yield (index, text) as each concurrent request completes.
 
-    Requests are made sequentially so each result is yielded immediately,
-    allowing the TUI to update after every sample.
+    Results are yielded in completion order, not dispatch order,
+    so the TUI updates as soon as each sample arrives.
     """
     if isinstance(backend, BatchBackend):
         results = await asyncio.to_thread(
@@ -53,6 +53,16 @@ async def sample_stream(
             yield i, text
         return
 
-    for i in range(n):
+    queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+
+    async def _run_one(index: int) -> None:
         text = await asyncio.to_thread(backend, prompt, **kwargs)
-        yield i, text
+        await queue.put((index, text))
+
+    tasks = [asyncio.create_task(_run_one(i)) for i in range(n)]
+
+    for _ in range(n):
+        idx, text = await queue.get()
+        yield idx, text
+
+    await asyncio.gather(*tasks, return_exceptions=True)
