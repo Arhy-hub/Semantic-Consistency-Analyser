@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sca.tui.app import SCAApp
+    from sca.tui.app import SCA
 
 
-def export_html(app: "SCAApp", path: str) -> None:
+def export_html(app: "SCA", path: str) -> None:
     """
     Export the current TUI state as a static HTML file.
 

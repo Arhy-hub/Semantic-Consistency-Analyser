@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from sca.core.backends.protocol import BatchBackend
-from sca.core.clustering import Cluster, cluster_embeddings
+from sca.core.clustering import Cluster, cluster_by_entailment, cluster_embeddings
 from sca.core.embedder import Embedder
 from sca.core.metrics import (
     Metrics,
@@ -230,13 +230,20 @@ class SemanticConsistencyAnalyzer:
 
         # ── Metrics ───────────────────────────────────────────────────────
         mps = mean_pairwise_similarity(sim_matrix)
-        s_entropy = semantic_entropy(clusters)
         cdv = centroid_distance_variance(embeddings)
         sil = silhouette(embeddings, labels)
 
         ent_rate: float | None = None
         if self.nli:
+            # Use NLI-based meaning classes for entropy (Kuhn et al. 2023)
+            nli_clusters = await asyncio.to_thread(
+                cluster_by_entailment, samples, embeddings
+            )
+            s_entropy = semantic_entropy(nli_clusters)
             ent_rate = await asyncio.to_thread(compute_entailment_rate, samples)
+        else:
+            # Approximate: treat embedding clusters as meaning classes
+            s_entropy = semantic_entropy(clusters)
 
         metrics = Metrics(
             mean_pairwise_similarity=mps,

@@ -29,6 +29,7 @@ from sca.tui.widgets.cluster_panel import ClusterPanel
 from sca.tui.widgets.metrics_panel import MetricsPanel
 from sca.tui.widgets.sample_feed import SampleFeed
 from sca.tui.widgets.similarity_heatmap import SimilarityHeatmap
+from sca.tui.widgets.scatter_plot import ScatterPlot
 
 
 # ── Messages ──────────────────────────────────────────────────────────────
@@ -41,10 +42,11 @@ class SampleReceived(Message):
 
 
 class MetricsUpdated(Message):
-    def __init__(self, metrics: Metrics, sample_count: int) -> None:
+    def __init__(self, metrics: Metrics, sample_count: int, entropy_history: list[float] | None = None) -> None:
         super().__init__()
         self.metrics = metrics
         self.sample_count = sample_count
+        self.entropy_history = entropy_history or []
 
 
 class ClustersUpdated(Message):
@@ -58,6 +60,13 @@ class HeatmapUpdated(Message):
         super().__init__()
         self.matrix = matrix
         self.title = title
+
+
+class ScatterUpdated(Message):
+    def __init__(self, coords: np.ndarray, labels: np.ndarray) -> None:
+        super().__init__()
+        self.coords = coords
+        self.labels = labels
 
 
 class AnalysisComplete(Message):
@@ -85,44 +94,28 @@ def _agreement_matrix(labels: np.ndarray) -> np.ndarray:
 
 # ── App ────────────────────────────────────────────────────────────────────
 
-class SCAApp(App):
+class SCA(App):
     """
     Semantic Consistency Analyzer TUI.
 
-    ┌─────────────────────┬──────────────────────────────┐
-    │  Sample Feed        │  Heatmap (m to cycle mode)    │
-    ├─────────────────────┼──────────────────────────────┤
-    │  Metrics Panel      │  Cluster Panel                │
-    └─────────────────────┴──────────────────────────────┘
+    ┌───────────────────┬──────────────────────────────┐
+    │  Sample Feed      │  Heatmap                      │  60%
+    ├─────────┬─────────┴──────────────┬────────────────┤
+    │ Metrics │ Clusters               │ UMAP Scatter    │  40%
+    └─────────┴────────────────────────┴────────────────┘
     """
 
     CSS = """
-    Screen {
-        layout: vertical;
-        background: #0a0a0a;
-        color: white;
-    }
-    Header {
-        background: #0a0a0a;
-        color: #00d7d7;
-        text-style: bold;
-    }
-    Footer {
-        background: #111111;
-        color: #555555;
-    }
-    #top-row {
-        height: 60%;
-        layout: horizontal;
-    }
-    #bottom-row {
-        height: 40%;
-        layout: horizontal;
-    }
-    SampleFeed, SimilarityHeatmap, MetricsPanel, ClusterPanel {
-        width: 50%;
-        background: #0a0a0a;
-    }
+    Screen { layout: vertical; background: #0a0a0a; color: white; }
+    Header { background: #0a0a0a; color: #00d7d7; text-style: bold; }
+    Footer { background: #111111; color: #555555; }
+    #top-row { height: 60%; layout: horizontal; }
+    #bottom-row { height: 40%; layout: horizontal; }
+    SampleFeed    { width: 40%; background: #0a0a0a; }
+    SimilarityHeatmap { width: 60%; background: #0a0a0a; }
+    MetricsPanel  { width: 30%; background: #0a0a0a; }
+    ClusterPanel  { width: 40%; background: #0a0a0a; }
+    ScatterPlot   { width: 30%; background: #0a0a0a; }
     """
 
     BINDINGS = [
@@ -150,6 +143,7 @@ class SCAApp(App):
         self._agreement_mat:  np.ndarray | None = None
         self._silhouette_mat: np.ndarray | None = None
         self._labels:         np.ndarray | None = None
+        self._entropy_history: list[float] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -159,6 +153,7 @@ class SCAApp(App):
         with Horizontal(id="bottom-row"):
             yield MetricsPanel(id="metrics")
             yield ClusterPanel(id="clusters")
+            yield ScatterPlot(id="scatter")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -184,7 +179,21 @@ class SCAApp(App):
             title = "cosine similarity"
         else:
             title = _MEASURE_TITLES.get(self._measure, self._measure)
+
         self.post_message(HeatmapUpdated(mat, title))
+
+
+    # ── Scatter update ─────────────────────────────────────────────────────
+
+    async def _update_scatter(self, embeddings: np.ndarray, labels: np.ndarray) -> None:
+        if len(embeddings) < 4:
+            return
+        try:
+            from sca.core.clustering import umap_reduce  # noqa: PLC0415
+            coords = await asyncio.to_thread(umap_reduce, embeddings)
+            self.post_message(ScatterUpdated(coords, labels))
+        except Exception:
+            pass
 
     # ── Background analysis worker ─────────────────────────────────────────
 
@@ -228,7 +237,9 @@ class SCAApp(App):
             self.post_message(ClustersUpdated(clusters))
             self._post_heatmap()
             metrics = self._compute_metrics(embeddings, self._cosine_mat, clusters, labels)
-            self.post_message(MetricsUpdated(metrics, len(self._samples)))
+            self._entropy_history.append(metrics.semantic_entropy)
+            self.post_message(MetricsUpdated(metrics, len(self._samples), list(self._entropy_history)))
+            await self._update_scatter(embeddings, labels)
 
     async def _process_new_sample(self, index: int, text: str) -> None:
         self._samples.append(text)
@@ -255,8 +266,10 @@ class SCAApp(App):
                 silhouette_matrix, embeddings, labels
             )
             metrics = self._compute_metrics(embeddings, self._cosine_mat, clusters, labels)
-            self.post_message(MetricsUpdated(metrics, len(self._samples)))
+            self._entropy_history.append(metrics.semantic_entropy)
+            self.post_message(MetricsUpdated(metrics, len(self._samples), list(self._entropy_history)))
             self.post_message(ClustersUpdated(clusters))
+            await self._update_scatter(embeddings, labels)
 
         self._post_heatmap()
 
@@ -294,13 +307,18 @@ class SCAApp(App):
         self.query_one("#sample-feed", SampleFeed).add_sample(message.index, message.text)
 
     def on_metrics_updated(self, message: MetricsUpdated) -> None:
-        self.query_one("#metrics", MetricsPanel).update_metrics(message.metrics, message.sample_count)
+        self.query_one("#metrics", MetricsPanel).update_metrics(
+            message.metrics, message.sample_count, message.entropy_history
+        )
 
     def on_clusters_updated(self, message: ClustersUpdated) -> None:
         self.query_one("#clusters", ClusterPanel).update_clusters(message.clusters)
 
     def on_heatmap_updated(self, message: HeatmapUpdated) -> None:
         self.query_one("#heatmap", SimilarityHeatmap).update_matrix(message.matrix, message.title)
+
+    def on_scatter_updated(self, message: ScatterUpdated) -> None:
+        self.query_one("#scatter", ScatterPlot).update(message.coords, message.labels)
 
     def on_analysis_complete(self, message: AnalysisComplete) -> None:
         self._results = message.results

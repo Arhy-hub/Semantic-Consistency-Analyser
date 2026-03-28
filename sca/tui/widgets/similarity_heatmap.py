@@ -11,24 +11,26 @@ from rich.text import Text
 _LEFT   = 5   # row axis:  "  1 │"
 _BOTTOM = 3   # col axis, legend bar, legend values
 
-# ── Colour ramp: value [-1, 1] → dark … cyan ─────────────────────────────
-_RAMP = [
-    (0.00, "#1a1a1a"),
-    (0.35, "#2e2e2e"),
-    (0.55, "#555555"),
-    (0.75, "#999999"),
-    (0.92, "#00d7d7"),
-]
+# ── 2-colour gradient: dark background → accent cyan ─────────────────────
+_LO: tuple[int, int, int] = (10,   10,  10)   # #0a0a0a
+_HI: tuple[int, int, int] = ( 0,  215, 215)   # #00d7d7
+
+# Pre-compute 256 evenly-spaced steps so every possible terminal colour
+# value maps to a distinct, equally-sized band.
+_STEPS = 256
+_PALETTE: list[str] = []
+for _i in range(_STEPS):
+    _t = _i / (_STEPS - 1)
+    _r = int(_LO[0] + (_HI[0] - _LO[0]) * _t)
+    _g = int(_LO[1] + (_HI[1] - _LO[1]) * _t)
+    _b = int(_LO[2] + (_HI[2] - _LO[2]) * _t)
+    _PALETTE.append(f"#{_r:02x}{_g:02x}{_b:02x}")
 
 
 def _cell_style(value: float) -> str:
+    """Map a similarity value in [-1, 1] to a palette colour."""
     v = max(0.0, min(1.0, (value + 1.0) / 2.0))
-    for i in range(len(_RAMP) - 1):
-        lo_v, lo_c = _RAMP[i]
-        hi_v, hi_c = _RAMP[i + 1]
-        if v <= hi_v:
-            return hi_c if (v - lo_v) >= (hi_v - v) else lo_c
-    return _RAMP[-1][1]
+    return _PALETTE[int(v * (_STEPS - 1))]
 
 
 
