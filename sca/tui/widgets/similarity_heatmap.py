@@ -11,31 +11,26 @@ from rich.text import Text
 _LEFT   = 5   # row axis:  "  1 │"
 _BOTTOM = 3   # col axis, legend bar, legend values
 
-# ── Gradient: value [-1, 1] → smooth dark … cyan ─────────────────────────
-# Anchor points as (stop, (R, G, B))
-_GRADIENT: list[tuple[float, tuple[int, int, int]]] = [
-    (0.00, (10,  10,  10)),
-    (0.25, (40,  40,  40)),
-    (0.50, (85,  85,  85)),
-    (0.75, (0,  140, 140)),
-    (1.00, (0,  215, 215)),
-]
+# ── 2-colour gradient: dark background → accent cyan ─────────────────────
+_LO: tuple[int, int, int] = (10,   10,  10)   # #0a0a0a
+_HI: tuple[int, int, int] = ( 0,  215, 215)   # #00d7d7
+
+# Pre-compute 256 evenly-spaced steps so every possible terminal colour
+# value maps to a distinct, equally-sized band.
+_STEPS = 256
+_PALETTE: list[str] = []
+for _i in range(_STEPS):
+    _t = _i / (_STEPS - 1)
+    _r = int(_LO[0] + (_HI[0] - _LO[0]) * _t)
+    _g = int(_LO[1] + (_HI[1] - _LO[1]) * _t)
+    _b = int(_LO[2] + (_HI[2] - _LO[2]) * _t)
+    _PALETTE.append(f"#{_r:02x}{_g:02x}{_b:02x}")
 
 
 def _cell_style(value: float) -> str:
-    """Smooth RGB-interpolated colour for a similarity value in [-1, 1]."""
+    """Map a similarity value in [-1, 1] to a palette colour."""
     v = max(0.0, min(1.0, (value + 1.0) / 2.0))
-    for i in range(len(_GRADIENT) - 1):
-        lo_v, (r1, g1, b1) = _GRADIENT[i]
-        hi_v, (r2, g2, b2) = _GRADIENT[i + 1]
-        if v <= hi_v:
-            t = (v - lo_v) / (hi_v - lo_v) if hi_v > lo_v else 1.0
-            r = int(r1 + (r2 - r1) * t)
-            g = int(g1 + (g2 - g1) * t)
-            b = int(b1 + (b2 - b1) * t)
-            return f"#{r:02x}{g:02x}{b:02x}"
-    r, g, b = _GRADIENT[-1][1]
-    return f"#{r:02x}{g:02x}{b:02x}"
+    return _PALETTE[int(v * (_STEPS - 1))]
 
 
 

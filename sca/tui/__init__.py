@@ -1,5 +1,5 @@
 """TUI components for sca."""
 
-from sca.tui.app import SCAApp
+from sca.tui.app import SCA
 
-__all__ = ["SCAApp"]
+__all__ = ["SCA"]

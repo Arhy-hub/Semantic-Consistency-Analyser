@@ -123,13 +123,17 @@ def mean_pairwise_similarity(sim_matrix: np.ndarray) -> float:
 
 def semantic_entropy(clusters: list["Cluster"]) -> float:
     """
-    Shannon entropy over the cluster size distribution.
+    Shannon entropy over the cluster probability distribution.
 
-    p_i = cluster_size / total_samples
-    H = -sum(p_i * log(p_i))
+    p(c) = |c| / N   (uniform weight per sample — valid for MC sampling)
+    SE = -∑ p(c) · log p(c)
 
-    Low entropy = samples cluster into few groups = consistent.
-    High entropy = many equally-sized clusters = inconsistent.
+    When clusters are built with cluster_by_entailment (NLI bidirectional
+    entailment), this matches the definition in Kuhn et al. 2023.
+    When clusters come from HDBSCAN on embeddings, this is an approximation.
+
+    Low entropy = outputs fall into few meaning classes = consistent.
+    High entropy = many equally-sized meaning classes = inconsistent.
     """
     if not clusters:
         return 0.0

@@ -2,9 +2,44 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.widgets import Label
+from textual.app import ComposeResult, RenderResult
+from textual.widget import Widget
 from textual.containers import ScrollableContainer
+from rich.text import Text
+
+
+class SampleItem(Widget):
+    """A single clickable sample entry."""
+
+    DEFAULT_CSS = """
+    SampleItem {
+        height: auto;
+        padding: 0 1;
+        border-bottom: solid #1a1a1a;
+        color: #cccccc;
+    }
+    SampleItem:hover {
+        background: #1a1a1a;
+        color: white;
+    }
+    """
+
+    def __init__(self, index: int, full_text: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._index = index
+        self._full_text = full_text
+
+    def render(self) -> RenderResult:
+        display = self._full_text[:240] + "…" if len(self._full_text) > 240 else self._full_text
+        display = display.replace("\n", " ").strip()
+        t = Text(no_wrap=False)
+        t.append(f"{self._index + 1:>3}  ", style="#555555")
+        t.append(display)
+        return t
+
+    def on_click(self) -> None:
+        from sca.tui.widgets.sample_modal import SampleModal
+        self.app.push_screen(SampleModal(self._index, self._full_text))
 
 
 class SampleFeed(ScrollableContainer):
@@ -21,29 +56,15 @@ class SampleFeed(ScrollableContainer):
         overflow-y: scroll;
         padding: 0 1;
     }
-    SampleFeed Label.sample-item {
-        color: #cccccc;
-        border-bottom: solid #222222;
-        padding: 0 0 1 0;
-        margin-bottom: 1;
-    }
-    SampleFeed Label.sample-index {
-        color: #00d7d7;
-    }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._sample_count = 0
 
-    def compose(self) -> ComposeResult:
-        return iter([])
-
     def add_sample(self, index: int, text: str) -> None:
         self._sample_count += 1
         self.border_subtitle = str(self._sample_count)
-        display = text[:280] + "…" if len(text) > 280 else text
-        display = display.replace("\n", " ").strip()
-        label = Label(f"[#555555]{index + 1:>3}[/]  {display}", classes="sample-item")
-        self.mount(label)
+        item = SampleItem(index, text)
+        self.mount(item)
         self.scroll_end(animate=False)

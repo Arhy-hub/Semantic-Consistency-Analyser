@@ -147,9 +147,9 @@ def run(
         _print_results(results)
         _do_export(results, export, out)
     else:
-        from sca.tui.app import SCAApp  # noqa: PLC0415
+        from sca.tui.app import SCA  # noqa: PLC0415
 
-        tui_app = SCAApp(analyzer, measure=measure)
+        tui_app = SCA(analyzer, measure=measure)
         tui_app.run()
         results = tui_app.get_results()
 
