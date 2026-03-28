@@ -29,7 +29,7 @@ from sca.tui.widgets.cluster_panel import ClusterPanel
 from sca.tui.widgets.metrics_panel import MetricsPanel
 from sca.tui.widgets.sample_feed import SampleFeed
 from sca.tui.widgets.similarity_heatmap import SimilarityHeatmap
-from sca.tui.widgets.scatter_plot import ScatterPlot
+from sca.tui.widgets.similarity_histogram import SimilarityHistogram
 
 
 # ── Messages ──────────────────────────────────────────────────────────────
@@ -61,12 +61,6 @@ class HeatmapUpdated(Message):
         self.matrix = matrix
         self.title = title
 
-
-class ScatterUpdated(Message):
-    def __init__(self, coords: np.ndarray, labels: np.ndarray) -> None:
-        super().__init__()
-        self.coords = coords
-        self.labels = labels
 
 
 class AnalysisComplete(Message):
@@ -115,7 +109,7 @@ class SCA(App):
     SimilarityHeatmap { width: 60%; background: #0a0a0a; }
     MetricsPanel  { width: 30%; background: #0a0a0a; }
     ClusterPanel  { width: 40%; background: #0a0a0a; }
-    ScatterPlot   { width: 30%; background: #0a0a0a; }
+    SimilarityHistogram { width: 30%; background: #0a0a0a; }
     """
 
     BINDINGS = [
@@ -153,7 +147,7 @@ class SCA(App):
         with Horizontal(id="bottom-row"):
             yield MetricsPanel(id="metrics")
             yield ClusterPanel(id="clusters")
-            yield ScatterPlot(id="scatter")
+            yield SimilarityHistogram(id="sim-histogram")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -182,18 +176,6 @@ class SCA(App):
 
         self.post_message(HeatmapUpdated(mat, title))
 
-
-    # ── Scatter update ─────────────────────────────────────────────────────
-
-    async def _update_scatter(self, embeddings: np.ndarray, labels: np.ndarray) -> None:
-        if len(embeddings) < 4:
-            return
-        try:
-            from sca.core.clustering import umap_reduce  # noqa: PLC0415
-            coords = await asyncio.to_thread(umap_reduce, embeddings)
-            self.post_message(ScatterUpdated(coords, labels))
-        except Exception:
-            pass
 
     # ── Background analysis worker ─────────────────────────────────────────
 
@@ -239,7 +221,6 @@ class SCA(App):
             metrics = self._compute_metrics(embeddings, self._cosine_mat, clusters, labels)
             self._entropy_history.append(metrics.semantic_entropy)
             self.post_message(MetricsUpdated(metrics, len(self._samples), list(self._entropy_history)))
-            await self._update_scatter(embeddings, labels)
 
     async def _process_new_sample(self, index: int, text: str) -> None:
         self._samples.append(text)
@@ -269,7 +250,6 @@ class SCA(App):
             self._entropy_history.append(metrics.semantic_entropy)
             self.post_message(MetricsUpdated(metrics, len(self._samples), list(self._entropy_history)))
             self.post_message(ClustersUpdated(clusters))
-            await self._update_scatter(embeddings, labels)
 
         self._post_heatmap()
 
@@ -316,9 +296,8 @@ class SCA(App):
 
     def on_heatmap_updated(self, message: HeatmapUpdated) -> None:
         self.query_one("#heatmap", SimilarityHeatmap).update_matrix(message.matrix, message.title)
-
-    def on_scatter_updated(self, message: ScatterUpdated) -> None:
-        self.query_one("#scatter", ScatterPlot).update(message.coords, message.labels)
+        if self._cosine_mat is not None:
+            self.query_one("#sim-histogram", SimilarityHistogram).update_matrix(self._cosine_mat)
 
     def on_analysis_complete(self, message: AnalysisComplete) -> None:
         self._results = message.results
