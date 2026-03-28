@@ -120,7 +120,8 @@ def run(
         None, help="Stop early if entropy delta < threshold for 3 windows."
     ),
     measure: str = typer.Option(
-        "cosine", help="Heatmap measure: cosine, agreement."
+        "cosine",
+        help="Heatmap measure: cosine, euclidean, agreement, silhouette, centroid.",
     ),
 ) -> None:
     """Run N samples and analyze semantic consistency."""

@@ -17,10 +17,13 @@ from sca.core.embedder import Embedder
 from sca.core.metrics import (
     Metrics,
     centroid_distance_variance,
+    centroid_distance_matrix,
+    compute_euclidean_matrix,
     compute_similarity_matrix,
     mean_pairwise_similarity,
     semantic_entropy,
     silhouette,
+    silhouette_matrix,
 )
 from sca.tui.widgets.cluster_panel import ClusterPanel
 from sca.tui.widgets.metrics_panel import MetricsPanel
@@ -63,15 +66,21 @@ class AnalysisComplete(Message):
         self.results = results
 
 
-# ── Available heatmap measures ─────────────────────────────────────────────
+# ── Measure → display title ────────────────────────────────────────────────
 
-_HEATMAP_MODES = ["cosine sim", "cluster agreement"]
+_MEASURE_TITLES: dict[str, str] = {
+    "cosine":     "cosine similarity",
+    "euclidean":  "euclidean distance",
+    "agreement":  "cluster agreement",
+    "silhouette": "silhouette scores",
+    "centroid":   "centroid distance",
+}
 
 
 def _agreement_matrix(labels: np.ndarray) -> np.ndarray:
     """Binary matrix: +1 if same cluster, -1 if different."""
     same = (labels[:, None] == labels[None, :]).astype(float)
-    return same * 2.0 - 1.0  # maps {0,1} → {-1,+1} so colour ramp still applies
+    return same * 2.0 - 1.0
 
 
 # ── App ────────────────────────────────────────────────────────────────────
@@ -134,8 +143,13 @@ class SCAApp(App):
         self._embeddings: list[np.ndarray] = []
         self._embedder = Embedder(analyzer.embedding_model)
         self._min_cluster_size = analyzer.min_cluster_size
-        self._sim_matrix: np.ndarray | None = None
-        self._labels: np.ndarray | None = None
+        # Per-measure matrices, populated as data arrives
+        self._cosine_mat:     np.ndarray | None = None
+        self._euclidean_mat:  np.ndarray | None = None
+        self._centroid_mat:   np.ndarray | None = None
+        self._agreement_mat:  np.ndarray | None = None
+        self._silhouette_mat: np.ndarray | None = None
+        self._labels:         np.ndarray | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -153,13 +167,24 @@ class SCAApp(App):
     # ── Heatmap dispatch ───────────────────────────────────────────────────
 
     def _post_heatmap(self) -> None:
-        """Post the matrix for the configured measure."""
-        if self._sim_matrix is None:
-            return
-        if self._measure == "agreement" and self._labels is not None:
-            self.post_message(HeatmapUpdated(_agreement_matrix(self._labels), "cluster agreement"))
+        """Post whichever matrix corresponds to the configured measure."""
+        matrix_for: dict[str, np.ndarray | None] = {
+            "cosine":     self._cosine_mat,
+            "euclidean":  self._euclidean_mat,
+            "centroid":   self._centroid_mat,
+            "agreement":  self._agreement_mat,
+            "silhouette": self._silhouette_mat,
+        }
+        mat = matrix_for.get(self._measure)
+        # Fall back to cosine if the requested measure isn't ready yet
+        if mat is None:
+            mat = self._cosine_mat
+            if mat is None:
+                return
+            title = "cosine similarity"
         else:
-            self.post_message(HeatmapUpdated(self._sim_matrix, "cosine sim"))
+            title = _MEASURE_TITLES.get(self._measure, self._measure)
+        self.post_message(HeatmapUpdated(mat, title))
 
     # ── Background analysis worker ─────────────────────────────────────────
 
@@ -187,20 +212,22 @@ class SCAApp(App):
             ):
                 await self._process_new_sample(idx, text)
 
-        # Final pass with cluster summaries
+        # Final pass: generate cluster summaries then refresh everything
         if self._samples and self._embeddings:
             embeddings = np.stack(self._embeddings)
-            sim_matrix = compute_similarity_matrix(embeddings)
             clusters = await asyncio.to_thread(
                 cluster_embeddings, embeddings, self._samples, self._min_cluster_size
             )
             await self.analyzer._summarize_clusters(clusters, backend)
-            self.post_message(ClustersUpdated(clusters))
             labels = self._build_labels(self._samples, clusters)
-            self._labels = labels
-            self._sim_matrix = sim_matrix
+            self._labels         = labels
+            self._agreement_mat  = _agreement_matrix(labels)
+            self._silhouette_mat = await asyncio.to_thread(
+                silhouette_matrix, embeddings, labels
+            )
+            self.post_message(ClustersUpdated(clusters))
             self._post_heatmap()
-            metrics = self._compute_metrics(embeddings, sim_matrix, clusters, labels)
+            metrics = self._compute_metrics(embeddings, self._cosine_mat, clusters, labels)
             self.post_message(MetricsUpdated(metrics, len(self._samples)))
 
     async def _process_new_sample(self, index: int, text: str) -> None:
@@ -211,22 +238,27 @@ class SCAApp(App):
         self.post_message(SampleReceived(index, text))
 
         embeddings = np.stack(self._embeddings)
-        sim_matrix = compute_similarity_matrix(embeddings)
-        self._sim_matrix = sim_matrix
+
+        # Embedding-based matrices — available immediately
+        self._cosine_mat    = compute_similarity_matrix(embeddings)
+        self._euclidean_mat = await asyncio.to_thread(compute_euclidean_matrix, embeddings)
+        self._centroid_mat  = await asyncio.to_thread(centroid_distance_matrix, embeddings)
 
         if len(self._samples) >= self._min_cluster_size:
             clusters = await asyncio.to_thread(
                 cluster_embeddings, embeddings, self._samples, self._min_cluster_size
             )
             labels = self._build_labels(self._samples, clusters)
-            self._labels = labels
-            self._post_heatmap()
-            metrics = self._compute_metrics(embeddings, sim_matrix, clusters, labels)
+            self._labels         = labels
+            self._agreement_mat  = _agreement_matrix(labels)
+            self._silhouette_mat = await asyncio.to_thread(
+                silhouette_matrix, embeddings, labels
+            )
+            metrics = self._compute_metrics(embeddings, self._cosine_mat, clusters, labels)
             self.post_message(MetricsUpdated(metrics, len(self._samples)))
             self.post_message(ClustersUpdated(clusters))
-        else:
-            # No clusters yet — always show cosine sim
-            self.post_message(HeatmapUpdated(sim_matrix, "cosine sim"))
+
+        self._post_heatmap()
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

@@ -36,6 +36,62 @@ class Metrics:
         return f"Metrics({', '.join(parts)})"
 
 
+def compute_euclidean_matrix(embeddings: np.ndarray) -> np.ndarray:
+    """
+    Pairwise euclidean distance matrix, normalised to [-1, 1].
+
+    0 distance (identical) → 1.0  (bright)
+    max distance           → -1.0 (dark)
+    """
+    n = len(embeddings)
+    if n < 2:
+        return np.ones((n, n))
+    diff = embeddings[:, None, :] - embeddings[None, :, :]
+    dist = np.sqrt((diff ** 2).sum(axis=-1))
+    max_d = float(dist.max())
+    if max_d == 0:
+        return np.ones((n, n))
+    return 1.0 - 2.0 * dist / max_d
+
+
+def silhouette_matrix(embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    """
+    Per-sample silhouette scores broadcast as row bands.
+
+    cell[i, j] = silhouette_score(sample_i)  for all j.
+    Values are in [-1, 1]; bright rows = well-clustered samples.
+    """
+    from sklearn.metrics import silhouette_samples  # noqa: PLC0415
+
+    n = len(embeddings)
+    if n < 2 or len(np.unique(labels)) < 2:
+        return np.zeros((n, n))
+    try:
+        scores = silhouette_samples(embeddings, labels)  # (n,)
+    except Exception:
+        return np.zeros((n, n))
+    return np.tile(scores[:, None], (1, n))
+
+
+def centroid_distance_matrix(embeddings: np.ndarray) -> np.ndarray:
+    """
+    Per-sample distance from the semantic centroid, broadcast as row bands.
+
+    Normalised to [-1, 1]: at centroid → 1.0 (bright), furthest → -1.0 (dark).
+    cell[i, j] = normalised_centroid_distance(sample_i)  for all j.
+    """
+    n = len(embeddings)
+    if n < 2:
+        return np.zeros((n, n))
+    centroid = embeddings.mean(axis=0)
+    dist = np.linalg.norm(embeddings - centroid, axis=1)  # (n,)
+    max_d = float(dist.max())
+    if max_d == 0:
+        return np.zeros((n, n))
+    normalised = 1.0 - 2.0 * dist / max_d  # (n,)
+    return np.tile(normalised[:, None], (1, n))
+
+
 def compute_similarity_matrix(embeddings: np.ndarray) -> np.ndarray:
     """
     Compute pairwise cosine similarity matrix.
