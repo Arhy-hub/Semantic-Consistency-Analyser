@@ -119,6 +119,9 @@ def run(
     convergence_threshold: Optional[float] = typer.Option(
         None, help="Stop early if entropy delta < threshold for 3 windows."
     ),
+    measure: str = typer.Option(
+        "cosine", help="Heatmap measure: cosine, agreement."
+    ),
 ) -> None:
     """Run N samples and analyze semantic consistency."""
     backend = None
@@ -145,7 +148,7 @@ def run(
     else:
         from sca.tui.app import SCAApp  # noqa: PLC0415
 
-        tui_app = SCAApp(analyzer)
+        tui_app = SCAApp(analyzer, measure=measure)
         tui_app.run()
         results = tui_app.get_results()
 

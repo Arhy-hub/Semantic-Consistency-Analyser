@@ -118,21 +118,24 @@ class SCAApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("m", "cycle_heatmap_mode", "Heatmap mode"),
     ]
 
-    def __init__(self, analyzer: SemanticConsistencyAnalyzer, **kwargs) -> None:
+    def __init__(
+        self,
+        analyzer: SemanticConsistencyAnalyzer,
+        measure: str = "cosine",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.analyzer = analyzer
+        self._measure = measure
         self._results: Results | None = None
         self._samples: list[str] = []
         self._embeddings: list[np.ndarray] = []
         self._embedder = Embedder(analyzer.embedding_model)
         self._min_cluster_size = analyzer.min_cluster_size
-        # Heatmap state
         self._sim_matrix: np.ndarray | None = None
         self._labels: np.ndarray | None = None
-        self._heatmap_mode_idx: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -147,21 +150,14 @@ class SCAApp(App):
     def on_mount(self) -> None:
         self._run_analysis()
 
-    # ── Heatmap mode cycling ───────────────────────────────────────────────
-
-    def action_cycle_heatmap_mode(self) -> None:
-        if self._labels is None:
-            return  # cluster agreement not available yet
-        self._heatmap_mode_idx = (self._heatmap_mode_idx + 1) % len(_HEATMAP_MODES)
-        self._post_heatmap()
+    # ── Heatmap dispatch ───────────────────────────────────────────────────
 
     def _post_heatmap(self) -> None:
-        """Post the current heatmap matrix for whichever mode is active."""
+        """Post the matrix for the configured measure."""
         if self._sim_matrix is None:
             return
-        mode = _HEATMAP_MODES[self._heatmap_mode_idx]
-        if mode == "cluster agreement" and self._labels is not None:
-            self.post_message(HeatmapUpdated(_agreement_matrix(self._labels), mode))
+        if self._measure == "agreement" and self._labels is not None:
+            self.post_message(HeatmapUpdated(_agreement_matrix(self._labels), "cluster agreement"))
         else:
             self.post_message(HeatmapUpdated(self._sim_matrix, "cosine sim"))
 

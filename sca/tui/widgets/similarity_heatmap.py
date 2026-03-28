@@ -8,8 +8,7 @@ from textual.app import RenderResult
 from rich.text import Text
 
 # ── Layout constants ──────────────────────────────────────────────────────
-_LEFT   = 5   # row axis:      "  1 │"
-_RIGHT  = 4   # entropy col:   "│███"
+_LEFT   = 5   # row axis:  "  1 │"
 _BOTTOM = 3   # col axis, legend bar, legend values
 
 # ── Colour ramp: value [-1, 1] → dark … cyan ─────────────────────────────
@@ -31,16 +30,6 @@ def _cell_style(value: float) -> str:
             return hi_c if (v - lo_v) >= (hi_v - v) else lo_c
     return _RAMP[-1][1]
 
-
-def _row_entropy(row: np.ndarray) -> float:
-    """Normalised Shannon entropy of one matrix row treated as weights."""
-    p = row + 1.0
-    total = p.sum()
-    if total == 0:
-        return 0.0
-    p = p / total
-    h = float(-np.sum(p * np.log2(p + 1e-10)))
-    return min(1.0, h / np.log2(max(len(p), 2)))
 
 
 def _row_label_map(n: int, plot_h: int) -> dict[int, str]:
@@ -103,13 +92,13 @@ class SimilarityHeatmap(Widget):
     Display-agnostic n×n matrix heatmap.
 
     The app decides what measure to pass (cosine sim, cluster agreement, …).
-    Press `m` to cycle through available measures.
+    The measure is chosen via the --measure CLI flag.
 
     Layout inside border:
-        row │  matrix cells          │ H
-        axis│                        │ ←per-row entropy
-        ────┴────────────────────────┴──
-             sample axis labels        H
+        row │  matrix cells
+        axis│
+        ────┴───────────────────────
+             sample axis labels
              legend gradient
              0.0      0.5      1.0
     """
@@ -149,7 +138,7 @@ class SimilarityHeatmap(Widget):
         n = self._n
 
         plot_h = max(1, h - _BOTTOM)
-        plot_w = max(1, w - _LEFT - _RIGHT)
+        plot_w = max(1, w - _LEFT)
 
         row_labels = _row_label_map(n, plot_h)
 
@@ -169,20 +158,11 @@ class SimilarityHeatmap(Widget):
                 j = min(int(col * n / plot_w), n - 1)
                 out.append("█", style=_cell_style(float(self._matrix[i, j])))
 
-            # Entropy sidebar: "│" + 3-char bar
-            out.append("│", style="#333333")
-            H = _row_entropy(self._matrix[i, :])
-            bar = int(round(H * 3))
-            style = "#00d7d7" if H > 0.5 else "#555555"
-            out.append("█" * bar + " " * (3 - bar), style=style)
-
             out.append("\n")
 
         # ── column axis ───────────────────────────────────────────────────
         out.append(" " * _LEFT)
         out.append_text(_col_axis(n, plot_w))
-        out.append(" " * (_RIGHT - 1))
-        out.append("H", style="#00d7d7")
         out.append("\n")
 
         # ── legend gradient ───────────────────────────────────────────────
