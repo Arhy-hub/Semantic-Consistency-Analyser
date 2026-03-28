@@ -28,6 +28,11 @@ class ScatterPlot(Widget):
         super().__init__(**kwargs)
         self._coords: np.ndarray | None = None   # shape (n, 2)
         self._labels: np.ndarray | None = None    # shape (n,)
+        self._error: str | None = None
+
+    def set_error(self, msg: str) -> None:
+        self._error = msg
+        self.refresh()
 
     def update(self, coords: np.ndarray, labels: np.ndarray) -> None:
         self._coords = coords
@@ -36,6 +41,8 @@ class ScatterPlot(Widget):
         self.refresh()
 
     def render(self) -> RenderResult:
+        if self._error is not None:
+            return Text(self._error, style="dim #ff5555")
         if self._coords is None:
             return Text("waiting for umap…\n(requires umap-learn)", style="dim #555555")
 
